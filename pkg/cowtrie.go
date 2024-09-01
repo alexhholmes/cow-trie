@@ -173,40 +173,51 @@ func (t *Trie[V]) Get(key string) (val V, version int, ok bool) {
 }
 
 func (t *Trie[V]) GetVersion(key string, version int) (val V, ok bool) {
-	if version > t.version {
+	if version > t.version || version < 0 {
 		return val, false
 	}
+
+	t.mu.Lock()
+	if version == t.version {
+		defer t.mu.Unlock()
+		val, _, ok = t.Get(key)
+		return val, ok
+	}
+	t.mu.Unlock()
 
 	t.muVersions.Lock()
 	defer t.muVersions.Unlock()
 
-	for _, v := range t.versions {
-		if v.version > version {
-			return val, false
-		} else if v.version == version {
-			// Found the version, get the value as a node type
-			follow := &v.node
-			if key == "" {
-				if follow.hasValue {
-					return follow.value, true
-				}
-				return val, false
-			}
-
-			for _, c := range key {
-				if _, ok = follow.children[string(c)]; !ok {
-					return val, false
-				}
-				follow = follow.children[string(c)]
-			}
-
-			if follow.hasValue {
-				return follow.value, true
-			}
-			return val, false
-		}
+	if version != t.version && len(t.versions) == 0 {
+		return val, false
+	} else if t.versions[0].version > version {
+		return val, false
 	}
 
+	index := version - t.versions[0].version
+	if index >= len(t.versions) {
+		return val, false
+	}
+	follow := &t.versions[index].node
+
+	// Found the version, get the value as a node type
+	if key == "" {
+		if follow.hasValue {
+			return follow.value, true
+		}
+		return val, false
+	}
+
+	for _, c := range key {
+		if _, ok = follow.children[string(c)]; !ok {
+			return val, false
+		}
+		follow = follow.children[string(c)]
+	}
+
+	if follow.hasValue {
+		return follow.value, true
+	}
 	return val, false
 }
 
