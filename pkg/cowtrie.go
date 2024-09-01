@@ -147,9 +147,42 @@ func (t *Trie[V]) Get(key string) (val V, version int, ok bool) {
 	return follow.value, follow.version, true
 }
 
-func (t *Trie[V]) GetVersion(key string, version int) (root *node[V], ok bool) {
-	// todo
-	return nil, false
+func (t *Trie[V]) GetVersion(key string, version int) (val V, ok bool) {
+	if version > t.version {
+		return val, false
+	}
+
+	t.muVersions.Lock()
+	defer t.muVersions.Unlock()
+
+	for _, v := range t.versions {
+		if v.version > version {
+			return val, false
+		} else if v.version == version {
+			// Found the version, get the value
+			follow := v
+			if key == "" {
+				if follow.hasValue {
+					return follow.value, true
+				}
+				return val, false
+			}
+
+			for _, c := range key {
+				if _, ok = follow.children[string(c)]; !ok {
+					return val, false
+				}
+				follow = follow.children[string(c)]
+			}
+
+			if follow.hasValue {
+				return follow.value, true
+			}
+			return val, false
+		}
+	}
+
+	return val, false
 }
 
 // Put inserts a new key-value pair into the trie. If the key already exists,
