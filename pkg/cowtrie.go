@@ -113,6 +113,7 @@ func (t *Trie[V]) Get(key string) (val V, version int, ok bool) {
 // the value will be updated.
 func (t *Trie[V]) Put(key string, value V) {
 	t.mu.Lock()
+	// TODO optimize this by adding locks onto the nodes
 	defer t.mu.Unlock()
 
 	// Create a new root node, version should increment because a current root
@@ -125,8 +126,8 @@ func (t *Trie[V]) Put(key string, value V) {
 
 	// Key that equals an empty string is stored in the root node
 	if key == "" {
-		t.current.hasValue = true
-		t.current.value = value
+		root.hasValue = true
+		root.value = value
 	}
 
 	if t.current == nil {
@@ -152,14 +153,30 @@ func (t *Trie[V]) Put(key string, value V) {
 		// Put the key-value pair into the trie (unless it was an empty string).
 		follow := root
 		for _, c := range key {
-			if _, ok := root.children[string(c)]; !ok {
-				root.children[string(c)] = &node[V]{
-					children: nil,
+			if _, ok := follow.children[string(c)]; !ok {
+				// Create a new node if the child does not exist, no
+				// copy-on-write is needed.
+				follow.children[string(c)] = &node[V]{
+					children: make(map[string]*node[V]),
 					version:  t.version,
 				}
+				follow = follow.children[string(c)]
+			} else {
+				// Copy-on-write is needed, create a new node and copy the
+				// child nodes.
+				newNode := &node[V]{
+					children: make(map[string]*node[V], len(follow.children[string(c)].children)),
+					version:  t.version,
+				}
+				for k, v := range follow.children[string(c)].children {
+					newNode.children[k] = v
+				}
+				follow.children[string(c)] = newNode
+				follow = newNode
 			}
-			root = root.children[string(c)]
 		}
+		follow.hasValue = true
+		follow.value = value
 	}
 }
 
