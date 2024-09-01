@@ -2,7 +2,10 @@ package pkg
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -72,27 +75,37 @@ func NewTrieWithCapacityAndTTL[V any](capacity, ttl int) (*Trie[V], error) {
 	}
 
 	if ttl > 0 {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, os.Kill, syscall.SIGTERM)
+
 		// Cleanup routine for expired versions
 		go func(t *Trie[V]) {
 			for {
-				time.Sleep(1 * time.Second)
-
-				t.muVersions.Lock()
-				count := 0
-				for _, v := range t.versions {
-					if v.ttl < time.Now().Second() {
-						// Expired version, add to count and continue
-						count++
-					} else {
-						break
+				select {
+				case <-sigChan:
+					// OS signal received, exit the cleanup routine
+					return
+				default:
+					// Perform cleanup of expired versions roots
+					t.muVersions.Lock()
+					count := 0
+					for _, v := range t.versions {
+						if v.ttl < time.Now().Second() {
+							// Expired version, add to count and continue
+							count++
+						} else {
+							break
+						}
 					}
+
+					if count > 0 {
+						// Remove expired versions
+						t.versions = t.versions[count:]
+					}
+					t.muVersions.Unlock()
 				}
 
-				if count > 0 {
-					// Remove expired versions
-					t.versions = t.versions[count:]
-				}
-				t.muVersions.Unlock()
+				time.Sleep(1 * time.Second)
 			}
 		}(t)
 	}
@@ -181,7 +194,6 @@ func (t *Trie[V]) Put(key string, value V) {
 		t.current = root
 
 		// Put the key-value pair into the trie (unless it was an empty string).
-		// TODO this is wrong
 		follow := root
 		for _, c := range key {
 			if _, ok := follow.children[string(c)]; !ok {
@@ -214,13 +226,7 @@ func (t *Trie[V]) Put(key string, value V) {
 // Delete removes the key-value pair from the trie. If the key does not exist,
 // this will be a no-op.
 func (t *Trie[V]) Delete(key string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	// Create a new root node, version should increment because a current root
-	// could be made nil by a delete operation.
-	t.version++
-	root := &node[V]
+	panic("not implemented")
 }
 
 type node[V any] struct {
