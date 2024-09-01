@@ -370,3 +370,7 @@ func (t *Trie[V]) Delete(key string) {
 	t.current = r
 	t.muVersions.Unlock()
 }
+
+func (t *Trie[V]) Version() int {
+	return t.version
+}
