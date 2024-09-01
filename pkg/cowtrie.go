@@ -153,6 +153,9 @@ func (t *Trie[V]) Get(key string) (val V, version int, ok bool) {
 		return val, 0, false
 	}
 
+	// We want to return the version number of the root node we access from
+	version = follow.version
+
 	// Traverse the trie to find the value, if it exists
 	for _, c := range key {
 		if _, ok = follow.children[string(c)]; !ok {
@@ -164,7 +167,7 @@ func (t *Trie[V]) Get(key string) (val V, version int, ok bool) {
 	}
 
 	if follow.hasValue {
-		return follow.value, follow.version, true
+		return follow.value, version, true
 	}
 	return val, 0, false
 }
