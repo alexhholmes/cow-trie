@@ -92,6 +92,11 @@ func NewTrieWithCapacityAndTTL[V any](capacity, ttl int) (*Trie[V], error) {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, os.Kill, syscall.SIGTERM)
 
+		sleepTime := time.Duration(t.ttl) * time.Second / 10
+		if sleepTime < time.Second {
+			sleepTime = time.Second
+		}
+
 		// Cleanup routine for expired versions
 		go func(t *Trie[V]) {
 			for {
@@ -119,7 +124,7 @@ func NewTrieWithCapacityAndTTL[V any](capacity, ttl int) (*Trie[V], error) {
 					t.muVersions.Unlock()
 				}
 
-				time.Sleep(1 * time.Second)
+				time.Sleep(sleepTime)
 			}
 		}(t)
 	}
