@@ -19,7 +19,7 @@ type Trie[V any] struct {
 	// current is the root node of the current version. This should not be
 	// written to directly. Instead, copy-on-write by creating a new root node
 	// and updating "current" to point to it.
-	current *node[V]
+	current *root[V]
 
 	// version is the current version number. This is incremented each time a
 	// put operation is performed.
@@ -33,7 +33,7 @@ type Trie[V any] struct {
 
 	// versions is a list of previous root nodes. The current root node is
 	// stored in "current".
-	versions []*node[V]
+	versions []*root[V]
 
 	// capacity is the maximum number of versions that can be stored. A value
 	// of 0 means "unlimited".
@@ -42,6 +42,20 @@ type Trie[V any] struct {
 	// ttl is the time-to-live for each non-current version. A value of 0 means
 	// "unlimited". As soon as a current version is superseded, its ttl starts.
 	ttl int
+}
+
+// root nodes are the top-level nodes in the trie and contain a time-to-live
+// value for when they are stored in the versions list.
+type root[V any] struct {
+	ttl int
+	node[V]
+}
+
+type node[V any] struct {
+	version  int
+	children map[string]*node[V]
+	hasValue bool
+	value    V
 }
 
 func NewTrie[V any]() *Trie[V] {
@@ -66,11 +80,11 @@ func NewTrieWithCapacityAndTTL[V any](capacity, ttl int) (*Trie[V], error) {
 	}
 
 	t := &Trie[V]{
-		versions: []*node[V]{},
+		versions: []*root[V]{},
 		ttl:      ttl,
 	}
 	if capacity > 0 {
-		t.versions = make([]*node[V], 0, capacity)
+		t.versions = make([]*root[V], 0, capacity)
 		t.capacity = capacity
 	}
 
@@ -120,7 +134,7 @@ func (t *Trie[V]) Get(key string) (val V, version int, ok bool) {
 	// writes may change `t.current`. This will also hold a reference to any
 	// root nodes that are being expired. As soon as `follow` is set to a child
 	// node, the root node can be garbage collected.
-	follow := t.current
+	follow := &t.current.node
 
 	if follow == nil {
 		return val, 0, false
@@ -140,11 +154,14 @@ func (t *Trie[V]) Get(key string) (val V, version int, ok bool) {
 			return val, 0, false
 		}
 
-		// Parent node can be garbage collected is this is the last reference
+		// Parent node can be garbage collected if this is the last reference
 		follow = follow.children[string(c)]
 	}
 
-	return follow.value, follow.version, true
+	if follow.hasValue {
+		return follow.value, follow.version, true
+	}
+	return val, 0, false
 }
 
 func (t *Trie[V]) GetVersion(key string, version int) (val V, ok bool) {
@@ -159,8 +176,8 @@ func (t *Trie[V]) GetVersion(key string, version int) (val V, ok bool) {
 		if v.version > version {
 			return val, false
 		} else if v.version == version {
-			// Found the version, get the value
-			follow := v
+			// Found the version, get the value as a node type
+			follow := &v.node
 			if key == "" {
 				if follow.hasValue {
 					return follow.value, true
@@ -195,24 +212,26 @@ func (t *Trie[V]) Put(key string, value V) {
 	// Create a new root node, version should increment because a current root
 	// could be made nil by a delete operation.
 	t.version++
-	root := &node[V]{
-		children: nil,
-		version:  t.version,
+	r := &root[V]{
+		node: node[V]{
+			children: nil,
+			version:  t.version,
+		},
 	}
 
 	// Key that equals an empty string is stored in the root node
 	if key == "" {
-		root.hasValue = true
-		root.value = value
+		r.hasValue = true
+		r.value = value
 	}
 
 	if t.current == nil {
-		t.current = root
+		t.current = r
 	} else {
 		// Copy the current root node to the new root node
-		root.children = make(map[string]*node[V], len(t.current.children))
+		r.children = make(map[string]*node[V], len(t.current.children))
 		for k, v := range t.current.children {
-			root.children[k] = v
+			r.children[k] = v
 		}
 
 		// Add the current root node to the versions list with ttl
@@ -229,10 +248,10 @@ func (t *Trie[V]) Put(key string, value V) {
 		t.muVersions.Unlock()
 
 		// And update the current root node to the new root node
-		t.current = root
+		t.current = r
 
 		// Put the key-value pair into the trie (unless it was an empty string).
-		follow := root
+		follow := &r.node
 		for _, c := range key {
 			if _, ok := follow.children[string(c)]; !ok {
 				// Create a new node if the child does not exist, no
@@ -276,7 +295,7 @@ func (t *Trie[V]) Delete(key string) {
 	var stack []*node[V]
 
 	// Traverse the trie to check if the key exists
-	follow := t.current
+	follow := &t.current.node
 	for _, c := range key {
 		if _, ok := follow.children[string(c)]; !ok {
 			// Key does not exist, return early
@@ -293,18 +312,20 @@ func (t *Trie[V]) Delete(key string) {
 
 	// Copy-on-write the nodes that are in the stack
 	t.version++
-	root := &node[V]{
-		children: make(map[string]*node[V], len(t.current.children)),
-		version:  t.version,
+	r := &root[V]{
+		node: node[V]{
+			children: make(map[string]*node[V], len(t.current.children)),
+			version:  t.version,
+		},
 	}
 
 	// Copy the current root node to the new root node
 	for k, v := range t.current.children {
-		root.children[k] = v
+		r.children[k] = v
 	}
 
-	parent := root
-	prev := root
+	parent := &r.node
+	prev := &r.node
 	for i, n := range stack {
 		// Copy-on-write is needed, create a new node and copy the child nodes.
 		newNode := &node[V]{
@@ -338,15 +359,6 @@ func (t *Trie[V]) Delete(key string) {
 		t.versions = append(t.versions, t.current)
 	}
 
-	t.current = root
+	t.current = r
 	t.muVersions.Unlock()
-}
-
-type node[V any] struct {
-	// ttl is only used for root nodes
-	ttl      int
-	version  int
-	children map[string]*node[V]
-	hasValue bool
-	value    V
 }
