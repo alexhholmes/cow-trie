@@ -147,6 +147,11 @@ func (t *Trie[V]) Get(key string) (val V, version int, ok bool) {
 	return follow.value, follow.version, true
 }
 
+func (t *Trie[V]) GetVersion(version int) (root *node[V], ok bool) {
+	// todo
+	return nil, false
+}
+
 // Put inserts a new key-value pair into the trie. If the key already exists,
 // the value will be updated.
 func (t *Trie[V]) Put(key string, value V) {
