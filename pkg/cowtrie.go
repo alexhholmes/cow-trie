@@ -62,17 +62,42 @@ func NewTrieWithCapacityAndTTL[V any](capacity, ttl int) (*Trie[V], error) {
 		return nil, fmt.Errorf("capacity must be greater than or equal to 0")
 	}
 
-	if capacity == 0 {
-		return &Trie[V]{
-			versions: make([]*node[V], 0),
-			ttl:      ttl,
-		}, nil
-	}
-	return &Trie[V]{
-		versions: make([]*node[V], 0, capacity),
-		capacity: capacity,
+	t := &Trie[V]{
+		versions: []*node[V]{},
 		ttl:      ttl,
-	}, nil
+	}
+	if capacity > 0 {
+		t.versions = make([]*node[V], 0, capacity)
+		t.capacity = capacity
+	}
+
+	if ttl > 0 {
+		// Cleanup routine for expired versions
+		go func(t *Trie[V]) {
+			for {
+				time.Sleep(1 * time.Second)
+
+				t.muVersions.Lock()
+				count := 0
+				for _, v := range t.versions {
+					if v.ttl < time.Now().Second() {
+						// Expired version, add to count and continue
+						count++
+					} else {
+						break
+					}
+				}
+
+				if count > 0 {
+					// Remove expired versions
+					t.versions = t.versions[count:]
+				}
+				t.muVersions.Unlock()
+			}
+		}(t)
+	}
+
+	return t, nil
 }
 
 // Get retrieves the value associated with the given key. If the key does not
@@ -144,7 +169,12 @@ func (t *Trie[V]) Put(key string, value V) {
 		if t.ttl > 0 {
 			t.current.ttl = time.Now().Second() + t.ttl
 		}
-		t.versions = append(t.versions, t.current)
+		if t.capacity > 0 && len(t.versions) >= t.capacity {
+			// Full capacity, evict the oldest version
+			t.versions = append(t.versions[1:], t.current)
+		} else {
+			t.versions = append(t.versions, t.current)
+		}
 		t.muVersions.Unlock()
 
 		// And update the current root node to the new root node
