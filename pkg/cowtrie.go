@@ -181,6 +181,7 @@ func (t *Trie[V]) Put(key string, value V) {
 		t.current = root
 
 		// Put the key-value pair into the trie (unless it was an empty string).
+		// TODO this is wrong
 		follow := root
 		for _, c := range key {
 			if _, ok := follow.children[string(c)]; !ok {
@@ -213,8 +214,13 @@ func (t *Trie[V]) Put(key string, value V) {
 // Delete removes the key-value pair from the trie. If the key does not exist,
 // this will be a no-op.
 func (t *Trie[V]) Delete(key string) {
-	// TODO implement me
-	panic("implement me")
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Create a new root node, version should increment because a current root
+	// could be made nil by a delete operation.
+	t.version++
+	root := &node[V]
 }
 
 type node[V any] struct {
