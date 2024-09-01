@@ -147,7 +147,7 @@ func (t *Trie[V]) Get(key string) (val V, version int, ok bool) {
 	return follow.value, follow.version, true
 }
 
-func (t *Trie[V]) GetVersion(version int) (root *node[V], ok bool) {
+func (t *Trie[V]) GetVersion(key string, version int) (root *node[V], ok bool) {
 	// todo
 	return nil, false
 }
