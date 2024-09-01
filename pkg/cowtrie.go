@@ -226,7 +226,82 @@ func (t *Trie[V]) Put(key string, value V) {
 // Delete removes the key-value pair from the trie. If the key does not exist,
 // this will be a no-op.
 func (t *Trie[V]) Delete(key string) {
-	panic("not implemented")
+	if t.current == nil || key == "" && !t.current.hasValue {
+		// Skip early for an empty string so mutex lock isn't held
+		return
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Stack to hold the nodes that need to be copied-on-write
+	var stack []*node[V]
+
+	// Traverse the trie to check if the key exists
+	follow := t.current
+	for _, c := range key {
+		if _, ok := follow.children[string(c)]; !ok {
+			// Key does not exist, return early
+			return
+		}
+		stack = append(stack, follow)
+		follow = follow.children[string(c)]
+	}
+
+	if !follow.hasValue {
+		// Value does not exist in the node that matches key, return early
+		return
+	}
+
+	// Copy-on-write the nodes that are in the stack
+	t.version++
+	root := &node[V]{
+		children: make(map[string]*node[V], len(t.current.children)),
+		version:  t.version,
+	}
+
+	// Copy the current root node to the new root node
+	for k, v := range t.current.children {
+		root.children[k] = v
+	}
+
+	parent := root
+	prev := root
+	for i, n := range stack {
+		// Copy-on-write is needed, create a new node and copy the child nodes.
+		newNode := &node[V]{
+			children: make(map[string]*node[V], len(n.children)),
+			version:  t.version,
+		}
+		for k, v := range n.children {
+			newNode.children[k] = v
+		}
+		parent.children[string(key[i])] = newNode
+		prev = parent
+		parent = newNode
+	}
+
+	// Remove the value from the node
+	parent.hasValue = false
+	if len(parent.children) == 0 {
+		// Remove the node if it has no children
+		delete(prev.children, string(key[len(key)-1]))
+	}
+
+	// Add the current root node to the versions list with ttl
+	t.muVersions.Lock()
+	if t.ttl > 0 {
+		t.current.ttl = time.Now().Second() + t.ttl
+	}
+	if t.capacity > 0 && len(t.versions) >= t.capacity {
+		// Full capacity, evict the oldest version
+		t.versions = append(t.versions[1:], t.current)
+	} else {
+		t.versions = append(t.versions, t.current)
+	}
+
+	t.current = root
+	t.muVersions.Unlock()
 }
 
 type node[V any] struct {
