@@ -3,6 +3,7 @@ package pkg
 import (
 	"fmt"
 	"sync"
+	"time"
 )
 
 // Trie is a thread-safe implementation of a copy-on-write trie with a
@@ -131,8 +132,34 @@ func (t *Trie[V]) Put(key string, value V) {
 	if t.current == nil {
 		t.current = root
 	} else {
+		// Copy the current root node to the new root node
+		root.children = make(map[string]*node[V], len(t.current.children))
+		for k, v := range t.current.children {
+			root.children[k] = v
+		}
+
+		// Add the current root node to the versions list with ttl
+		t.muVersions.Lock()
+		if t.ttl > 0 {
+			t.current.ttl = time.Now().Second() + t.ttl
+		}
 		t.versions = append(t.versions, t.current)
+		t.muVersions.Unlock()
+
+		// And update the current root node to the new root node
 		t.current = root
+
+		// Put the key-value pair into the trie (unless it was an empty string).
+		follow := root
+		for _, c := range key {
+			if _, ok := root.children[string(c)]; !ok {
+				root.children[string(c)] = &node[V]{
+					children: nil,
+					version:  t.version,
+				}
+			}
+			root = root.children[string(c)]
+		}
 	}
 }
 
